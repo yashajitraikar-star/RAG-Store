@@ -190,7 +190,7 @@ gemini_rag_app/
 |---|---|---|
 | `GEMINI_API_KEY` | Your Gemini API key from AI Studio | `AIzaSy...` |
 | `GEMINI_FILE_STORE` | Your File Search Store resource name | `fileSearchStores/abc123` |
-| `GEMINI_MODEL` | Gemini model to use for chat | `gemini-2.0-flash` |
+| `GEMINI_MODEL` | Gemini model to use for chat | `gemini-2.5-flash` |
 
 ---
 

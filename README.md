@@ -1,8 +1,3 @@
-Create a `README.md` file in your project root:
-
-## `README.md`
-
-```markdown
 # 🧠 Gemini RAG Manager
 
 A Python + Flask web app that lets you upload documents to a **Gemini File Search Store** as a knowledge base, and chat with them using the Gemini API.
@@ -139,8 +134,9 @@ gemini_rag_app/
 ├── templates/
 │   ├── index.html      # Upload dashboard UI
 │   └── chat.html       # Chatbot UI
-└── static/
-    └── style.css       # Shared styles
+├── static/
+│   └── style.css       # Shared styles
+└── README.md           # This file
 ```
 
 ---
@@ -204,32 +200,3 @@ gemini_rag_app/
 - [Google Gemini API](https://ai.google.dev/) — LLM + File Search Store (RAG)
 - [SQLite](https://www.sqlite.org/) — Local upload tracking
 - Vanilla HTML/CSS/JS — No frontend framework needed
-```
-
-***
-
-## Your final committed file list
-
-```
-gemini_rag_app/
-├── README.md           ← new
-├── .gitignore          ← already added
-├── .env.example        ← already added
-├── app.py
-├── setup_store.py
-├── requirements.txt
-├── start.bat
-├── templates/
-│   ├── index.html
-│   └── chat.html
-└── static/
-    └── style.css
-```
-
-Then commit it:
-
-```cmd
-git add README.md
-git commit -m "Add README with setup instructions"
-git push
-```

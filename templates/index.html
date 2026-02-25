@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini RAG — Knowledge Base</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">🧠 Gemini RAG Manager</div>
+        <a href="/chat" class="nav-btn">💬 Open Chatbot</a>
+    </nav>
+
+    <main class="container">
+
+        <!-- Upload Card -->
+        <div class="card">
+            <div class="card-title">📄 Upload File to Knowledge Base</div>
+
+            <div class="upload-zone" id="upload-zone">
+                <div class="upload-icon">📂</div>
+                <p class="upload-text">Drag & drop a file here, or <span class="link-text">click to browse</span></p>
+                <p class="upload-hint">
+                    PDF · DOCX · XLSX · PPTX · TXT · MD · CSV · JSON · HTML · XML · Code files & more
+                </p>
+                <input type="file" id="file-input" accept=".pdf,.txt,.md,.html,.htm,.csv,.json,.xml,.rtf,
+                  .docx,.doc,.xlsx,.xls,.pptx,.ppt,.odt,.ods,.odp,
+                  .py,.js,.ts,.dart,.java,.c,.cpp,.cs,.go,.rs,.rb,
+                  .php,.sh,.sql,.yaml,.yml,.toml,.ini,.css">
+            </div>
+
+            <!-- File Preview -->
+            <div class="file-preview" id="file-preview">
+                <span id="file-icon">📄</span>
+                <div>
+                    <div class="preview-name" id="preview-name"></div>
+                    <div class="preview-size" id="preview-size"></div>
+                </div>
+                <button class="clear-btn" id="clear-btn" title="Remove">✕</button>
+            </div>
+
+            <!-- Progress -->
+            <div class="progress-wrap" id="progress-wrap">
+                <div class="progress-track">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+                <p class="progress-label">Uploading & indexing… this can take 30–60 seconds</p>
+            </div>
+
+            <div class="upload-actions">
+                <button class="btn btn-primary" id="upload-btn" disabled>⬆️ Upload to Gemini</button>
+            </div>
+
+            <div class="alert" id="upload-alert"></div>
+        </div>
+
+        <!-- Files Table Card -->
+        <div class="card">
+            <div class="card-header-row">
+                <div class="card-title">📚 Uploaded Files — Knowledge Base</div>
+                <button class="btn btn-ghost" onclick="loadList()">🔄 Refresh</button>
+            </div>
+
+            <div class="empty-state" id="empty-state">No files uploaded yet.</div>
+
+            <table id="files-table" style="display:none">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>File Name</th>
+                        <th>Type</th>
+                        <th>Gemini Document ID</th>
+                        <th>Uploaded At (UTC)</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="files-tbody"></tbody>
+            </table>
+        </div>
+
+    </main>
+
+    <script>
+        // ── File type → icon map ───────────────────────────────────────────────
+        const TYPE_ICONS = {
+            PDF: "📕", TXT: "📝", MD: "📝", HTML: "🌐", HTM: "🌐",
+            CSV: "📊", JSON: "🔧", XML: "🔧", RTF: "📄",
+            DOCX: "📘", DOC: "📘", XLSX: "📗", XLS: "📗",
+            PPTX: "📙", PPT: "📙", ODT: "📄", ODS: "📊", ODP: "📙",
+            PY: "🐍", JS: "🟨", TS: "🔷", DART: "💙", JAVA: "☕",
+            C: "⚙️", CPP: "⚙️", CS: "⚙️", GO: "🐹", RS: "🦀",
+            RB: "💎", PHP: "🐘", SH: "🖥️", SQL: "🗄️",
+            YAML: "⚙️", YML: "⚙️", TOML: "⚙️", INI: "⚙️", CSS: "🎨",
+        };
+
+        const SUPPORTED_EXTS = new Set([
+            "pdf", "txt", "md", "html", "htm", "csv", "json", "xml", "rtf",
+            "docx", "doc", "xlsx", "xls", "pptx", "ppt", "odt", "ods", "odp",
+            "py", "js", "ts", "dart", "java", "c", "cpp", "cs", "go", "rs",
+            "rb", "php", "sh", "sql", "yaml", "yml", "toml", "ini", "css"
+        ]);
+
+        const uploadZone = document.getElementById('upload-zone');
+        const fileInput = document.getElementById('file-input');
+        const uploadBtn = document.getElementById('upload-btn');
+        const filePreview = document.getElementById('file-preview');
+        const fileIcon = document.getElementById('file-icon');
+        const clearBtn = document.getElementById('clear-btn');
+        const previewName = document.getElementById('preview-name');
+        const previewSize = document.getElementById('preview-size');
+        const progressWrap = document.getElementById('progress-wrap');
+        const progressBar = document.getElementById('progress-bar');
+        const uploadAlert = document.getElementById('upload-alert');
+        const emptyState = document.getElementById('empty-state');
+        const filesTable = document.getElementById('files-table');
+        const filesTbody = document.getElementById('files-tbody');
+
+        let selectedFile = null;
+
+        // ── Drag & Drop + Click ───────────────────────────────────────────────
+        uploadZone.addEventListener('click', () => fileInput.click());
+
+        uploadZone.addEventListener('dragover', e => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+        uploadZone.addEventListener('drop', e => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) pickFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) pickFile(fileInput.files[0]);
+        });
+
+        function pickFile(file) {
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (!SUPPORTED_EXTS.has(ext)) {
+                showAlert('error', `❌ Unsupported file type ".${ext}". Please upload a supported document or code file.`);
+                return;
+            }
+            selectedFile = file;
+            const typeKey = ext.toUpperCase();
+            fileIcon.textContent = TYPE_ICONS[typeKey] || '📄';
+            previewName.textContent = file.name;
+            previewSize.textContent = fmtBytes(file.size) + '  ·  ' + typeKey;
+            filePreview.style.display = 'flex';
+            uploadBtn.disabled = false;
+            clearAlert();
+        }
+
+        clearBtn.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            filePreview.style.display = 'none';
+            uploadBtn.disabled = true;
+            clearAlert();
+        });
+
+        function fmtBytes(b) {
+            if (b < 1024) return b + ' B';
+            if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+            return (b / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        // ── Upload ────────────────────────────────────────────────────────────
+        uploadBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+            uploadBtn.disabled = true;
+            progressWrap.style.display = 'block';
+            clearAlert();
+
+            progressBar.style.width = '0%';
+            let prog = 0;
+            const tick = setInterval(() => {
+                prog = Math.min(prog + 1.2, 88);
+                progressBar.style.width = prog + '%';
+            }, 600);
+
+            const form = new FormData();
+            form.append('file', selectedFile);
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 min timeout
+
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: form,
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                const data = await res.json();
+                clearInterval(tick);
+
+                if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+                progressBar.style.transition = 'width 0.4s';
+                progressBar.style.width = '100%';
+                await new Promise(r => setTimeout(r, 600));
+                progressWrap.style.display = 'none';
+                progressBar.style.width = '0%';
+                progressBar.style.transition = '';
+
+                showAlert('success', `✅ "${data.file_name}" [${data.file_type}] uploaded & indexed — ${data.uploaded_at}`);
+                clearBtn.click();
+                loadList();
+
+            } catch (err) {
+                clearInterval(tick);
+                progressWrap.style.display = 'none';
+                showAlert('error', '❌ ' + err.message);
+                uploadBtn.disabled = false;
+            }
+        });
+
+        // ── List ──────────────────────────────────────────────────────────────
+        async function loadList() {
+            try {
+                const res = await fetch('/api/list');
+                const rows = await res.json();
+                filesTbody.innerHTML = '';
+
+                if (!rows.length) {
+                    emptyState.style.display = 'block';
+                    filesTable.style.display = 'none';
+                    return;
+                }
+
+                emptyState.style.display = 'none';
+                filesTable.style.display = 'table';
+
+                rows.forEach((r, i) => {
+                    const shortId = r.doc_name.split('/').pop() || r.doc_name;
+                    const icon = TYPE_ICONS[r.file_type] || '📄';
+                    const typeBadge = `<span class="type-badge">${esc(r.file_type)}</span>`;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+            <td>${i + 1}</td>
+            <td>${icon} ${esc(r.file_name)}</td>
+            <td>${typeBadge}</td>
+            <td class="doc-id" title="${esc(r.doc_name)}">${esc(shortId)}</td>
+            <td>${esc(r.uploaded_at)}</td>
+            <td>
+              <button class="btn btn-danger btn-sm"
+                onclick="deleteRow(${r.id}, this)">🗑 Delete</button>
+            </td>
+          `;
+                    filesTbody.appendChild(tr);
+                });
+
+            } catch (err) {
+                console.error('List error:', err);
+            }
+        }
+
+        async function deleteRow(id, btn) {
+            if (!confirm('Remove this file from the knowledge base?')) return;
+            btn.disabled = true;
+            btn.textContent = '…';
+            try {
+                const res = await fetch('/api/delete/' + id, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Delete failed');
+                loadList();
+            } catch (err) {
+                alert('Error: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = '🗑 Delete';
+            }
+        }
+
+        function showAlert(type, msg) {
+            uploadAlert.className = 'alert ' + type;
+            uploadAlert.textContent = msg;
+        }
+        function clearAlert() {
+            uploadAlert.className = 'alert';
+            uploadAlert.textContent = '';
+        }
+        function esc(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        window.addEventListener('load', loadList);
+    </script>
+</body>
+
+</html>

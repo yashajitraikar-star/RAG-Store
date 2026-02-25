@@ -1,0 +1,47 @@
+# ── Environment & Secrets ──────────────────
+.env
+.env.*
+*.env
+
+# ── Database (local upload log) ────────────
+rag.db
+rag.db-shm
+rag.db-wal
+
+# ── Temp uploads folder ────────────────────
+uploads/
+
+# ── Python cache ───────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environment ─────────────────────
+venv/
+env/
+.venv/
+.env/
+ENV/
+
+# ── IDE / Editor ───────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ── Windows junk ───────────────────────────
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ── Logs ───────────────────────────────────
+*.log
+logs/
+
+# ── Distribution / build ───────────────────
+dist/
+build/
+*.egg-info/
+.eggs/

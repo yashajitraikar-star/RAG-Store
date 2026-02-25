@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini RAG — Chatbot</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">💬 Gemini RAG Chatbot</div>
+        <a href="/" class="nav-btn">📚 Back to Dashboard</a>
+    </nav>
+
+    <div class="chat-page">
+        <div class="chat-card">
+
+            <div class="chat-info-bar">
+                🔍 Answers are grounded in your uploaded PDFs
+            </div>
+
+            <div id="chat-log" class="chat-log">
+                <div class="msg bot-msg">
+                    <div class="msg-bubble">
+                        👋 Hi! I'm your Gemini RAG assistant. Ask me anything about your uploaded PDFs!
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-footer">
+                <div class="chat-input-row">
+                    <input type="text" id="msg-input" class="chat-input" placeholder="Ask a question from your PDFs…"
+                        autocomplete="off">
+                    <button class="btn btn-primary" id="send-btn">Send ➤</button>
+                </div>
+                <p class="chat-hint">Press Enter to send · Shift+Enter for new line</p>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const chatLog = document.getElementById('chat-log');
+        const msgInput = document.getElementById('msg-input');
+        const sendBtn = document.getElementById('send-btn');
+
+        function addMsg(text, cls) {
+            const wrap = document.createElement('div');
+            wrap.className = 'msg ' + cls;
+            const bubble = document.createElement('div');
+            bubble.className = 'msg-bubble';
+            bubble.textContent = text;
+            wrap.appendChild(bubble);
+            chatLog.appendChild(wrap);
+            chatLog.scrollTop = chatLog.scrollHeight;
+            return wrap;
+        }
+
+        async function send() {
+            const msg = msgInput.value.trim();
+            if (!msg) return;
+
+            addMsg(msg, 'user-msg');
+            msgInput.value = '';
+            sendBtn.disabled = true;
+            msgInput.disabled = true;
+
+            const thinking = addMsg('⏳ Searching knowledge base…', 'bot-msg thinking');
+
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: msg })
+                });
+                const data = await res.json();
+                chatLog.removeChild(thinking);
+
+                if (!res.ok) throw new Error(data.error || 'Chat failed');
+                addMsg(data.answer, 'bot-msg');
+
+            } catch (err) {
+                chatLog.removeChild(thinking);
+                addMsg('❌ Error: ' + err.message, 'bot-msg error-msg');
+            } finally {
+                sendBtn.disabled = false;
+                msgInput.disabled = false;
+                msgInput.focus();
+            }
+        }
+
+        sendBtn.addEventListener('click', send);
+        msgInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+            }
+        });
+    </script>
+</body>
+
+</html>

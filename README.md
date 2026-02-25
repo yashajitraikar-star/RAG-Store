@@ -59,7 +59,7 @@ Open `.env` and fill in your values:
 ```ini
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_FILE_STORE=fileSearchStores/your_store_id_here
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 > ⚠️ Never commit your `.env` file. It is already in `.gitignore`.

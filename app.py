@@ -265,13 +265,32 @@ def api_delete(row_id):
 def api_chat():
     data    = request.get_json(force=True)
     message = data.get("message", "").strip()
+    history = data.get("history", [])   # list of previous messages
+
     if not message:
         return jsonify({"error": "Empty message"}), 400
 
     try:
+        # Build contents array from history + current message
+        contents = []
+        for entry in history:
+            contents.append(
+                types.Content(
+                    role=entry["role"],   # "user" or "model"
+                    parts=[types.Part(text=entry["text"])]
+                )
+            )
+        # Add current user message
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part(text=message)]
+            )
+        )
+
         response = client.models.generate_content(
             model=MODEL,
-            contents=[message],
+            contents=contents,
             config=types.GenerateContentConfig(
                 tools=[
                     types.Tool(

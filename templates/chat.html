@@ -17,8 +17,12 @@
     <div class="chat-page">
         <div class="chat-card">
 
-            <div class="chat-info-bar">
-                🔍 Answers are grounded in your uploaded PDFs
+            <div class="chat-info-bar" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>🔍 Answers are grounded in your uploaded files</span>
+                <button class="btn btn-ghost" style="font-size:0.8rem; padding:4px 12px;"
+                    onclick="history=[]; chatLog.innerHTML=''; addMsg('🧹 Chat cleared. Start a new conversation!', 'bot-msg')">
+                    🧹 Clear Chat
+                </button>
             </div>
 
             <div id="chat-log" class="chat-log">
@@ -45,6 +49,9 @@
         const chatLog = document.getElementById('chat-log');
         const msgInput = document.getElementById('msg-input');
         const sendBtn = document.getElementById('send-btn');
+
+        // ── Conversation history stored in memory ──────────────────────────────
+        let history = [];
 
         function addMsg(text, cls) {
             const wrap = document.createElement('div');
@@ -73,12 +80,21 @@
                 const res = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: msg })
+                    body: JSON.stringify({
+                        message: msg,
+                        history: history        // ← send full history every time
+                    })
                 });
+
                 const data = await res.json();
                 chatLog.removeChild(thinking);
 
                 if (!res.ok) throw new Error(data.error || 'Chat failed');
+
+                // ── Save to history ──────────────────────────────────────────────
+                history.push({ role: "user", text: msg });
+                history.push({ role: "model", text: data.answer });
+
                 addMsg(data.answer, 'bot-msg');
 
             } catch (err) {

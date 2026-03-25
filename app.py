@@ -1,4 +1,5 @@
 import os
+import requests
 import sqlite3
 import tempfile
 import time
@@ -6,21 +7,32 @@ from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template, request
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials
 from google import genai
 from google.genai import types
+from system_prompt import SYSTEM_PROMPT, get_general_counselor_prompt
 
 load_dotenv()
 
 app = Flask(__name__)
 
 # ─── Config ──────────────────────────────────────────────────────────────
+try:
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(os.path.join(os.getcwd(), "next123-dc2f7-firebase-adminsdk-fbsvc-8352fe0478.json"))
+        firebase_admin.initialize_app(cred)
+except Exception as e:
+    print(f"Failed to initialize Firebase Admin: {e}")
+
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 DB_PATH    = os.path.join(os.getcwd(), "rag.db")
 API_KEY    = os.getenv("GEMINI_API_KEY")
 STORE_NAME = os.getenv("GEMINI_FILE_STORE")
-MODEL      = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+MODEL      = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+BASE_URL   = "https://generativelanguage.googleapis.com/v1beta"
 
 os.environ["GEMINI_API_KEY"] = API_KEY
 client = genai.Client()
@@ -97,6 +109,10 @@ def index():
 @app.route("/chat")
 def chat():
     return render_template("chat.html")
+
+@app.route("/auth")
+def auth_page():
+    return render_template("auth.html")
 
 # ─── API: Upload File ─────────────────────────────────────────────────────
 @app.route("/api/upload", methods=["POST"])
@@ -251,14 +267,51 @@ def api_delete(row_id):
     doc_name = row[0]
 
     try:
-        client.file_search_stores.documents.delete(name=doc_name)
+        resp = requests.delete(f"{BASE_URL}/{doc_name}?force=true&key={API_KEY}")
+        if resp.status_code != 200:
+            print(f"[Gemini force-delete warning] {resp.status_code} {resp.text}")
     except Exception as e:
-        print(f"[Gemini delete warning] {e}")
+        print(f"[Gemini delete exception] {e}")
 
     conn.execute("DELETE FROM uploads WHERE id = ?", (row_id,))
     conn.commit()
     conn.close()
     return jsonify({"status": "deleted"})
+
+# ─── API: Gemini Store Live Listing ────────────────────────────────────────
+@app.route("/api/store-docs")
+def api_store_docs():
+    try:
+        docs = list(client.file_search_stores.documents.list(parent=STORE_NAME))
+        result = []
+        for doc in docs:
+            result.append({
+                "name": doc.name,
+                "display_name": getattr(doc, 'display_name', None) or doc.name,
+                "create_time": str(getattr(doc, 'create_time', ''))
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ─── API: Force Delete Gemini Doc ──────────────────────────────────────────
+@app.route("/api/store-delete", methods=["POST"])
+def api_store_delete():
+    data = request.get_json()
+    doc_name = data.get("doc_name")
+    if not doc_name:
+        return jsonify({"error": "Missing doc_name"}), 400
+
+    resp = requests.delete(f"{BASE_URL}/{doc_name}?force=true&key={API_KEY}")
+    if resp.status_code == 200:
+        # Also clean up local DB if tracked
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("DELETE FROM uploads WHERE doc_name = ?", (doc_name,))
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "deleted"})
+    else:
+        return jsonify({"error": f"Failed: {resp.status_code} {resp.text}"}), 500
 
 # ─── API: Chat ─────────────────────────────────────────────────────────────
 @app.route("/api/chat", methods=["POST"])
@@ -266,6 +319,8 @@ def api_chat():
     data    = request.get_json(force=True)
     message = data.get("message", "").strip()
     history = data.get("history", [])   # list of previous messages
+    user_name = data.get("userName", "User")
+    user_profile = data.get("userProfile", None)
 
     if not message:
         return jsonify({"error": "Empty message"}), 400
@@ -288,10 +343,13 @@ def api_chat():
             )
         )
 
+        dynamic_prompt = get_general_counselor_prompt(user_name, user_profile)
+        
         response = client.models.generate_content(
             model=MODEL,
             contents=contents,
             config=types.GenerateContentConfig(
+                system_instruction=dynamic_prompt,
                 tools=[
                     types.Tool(
                         file_search=types.FileSearch(
@@ -301,15 +359,34 @@ def api_chat():
                 ]
             ),
         )
-        return jsonify({"answer": response.text})
+
+        # Safely extract text - response.text can be None if model only made tool calls
+        answer = None
+        if response.text:
+            answer = response.text
+        elif response.candidates:
+            for candidate in response.candidates:
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            answer = part.text
+                            break
+                if answer:
+                    break
+
+        if not answer:
+            answer = "I found some relevant information but couldn't compose a response. Please try rephrasing your question."
+
+        return jsonify({"answer": answer})
 
     except Exception as e:
+        print(f"[Chat] ❌ Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ─── Run ───────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 46)
     print("  🧠  Gemini RAG App")
-    print("  🌐  http://127.0.0.1:5000")
+    print("  🌐  http://127.0.0.1:7000")
     print("=" * 46)
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=7000, debug=True)

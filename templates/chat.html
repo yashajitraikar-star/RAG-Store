@@ -11,7 +11,10 @@
 <body>
     <nav class="navbar">
         <div class="nav-brand">💬 Gemini RAG Chatbot</div>
-        <a href="/" class="nav-btn">📚 Back to Dashboard</a>
+        <div style="display:flex; gap:10px;">
+            <a href="/" class="nav-btn">📚 Back to Dashboard</a>
+            <button id="signout-btn" class="nav-btn" style="background:transparent; border:1px solid rgba(255,255,255,0.3); color:white; cursor:pointer;">Sign Out</button>
+        </div>
     </nav>
 
     <div class="chat-page">
@@ -45,6 +48,8 @@
         </div>
     </div>
 
+    <!-- Markdown parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         const chatLog = document.getElementById('chat-log');
         const msgInput = document.getElementById('msg-input');
@@ -58,7 +63,12 @@
             wrap.className = 'msg ' + cls;
             const bubble = document.createElement('div');
             bubble.className = 'msg-bubble';
-            bubble.textContent = text;
+            // Render markdown for bot messages, plain text for user/error
+            if (cls.includes('bot-msg') && !cls.includes('thinking') && !cls.includes('error-msg')) {
+                bubble.innerHTML = marked.parse(text);
+            } else {
+                bubble.textContent = text;
+            }
             wrap.appendChild(bubble);
             chatLog.appendChild(wrap);
             chatLog.scrollTop = chatLog.scrollHeight;
@@ -77,12 +87,19 @@
             const thinking = addMsg('⏳ Searching knowledge base…', 'bot-msg thinking');
 
             try {
+                // Get the current logged in user from window object due to module scoping
+                const user = window.currentUser;
+                const profile = window.userProfile || {};
+                const userName = profile.name || (user ? (user.displayName || user.email.split('@')[0]) : "User");
+
                 const res = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         message: msg,
-                        history: history        // ← send full history every time
+                        history: history,
+                        userName: userName,
+                        userProfile: profile
                     })
                 });
 
@@ -113,6 +130,55 @@
                 e.preventDefault();
                 send();
             }
+        });
+    </script>
+
+    <!-- Firebase Initialization -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-analytics.js";
+        import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-auth.js";
+        import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAOIqTa5OCi2d-xSy34YnE4MMZ271OZ-Nk",
+            authDomain: "next123-dc2f7.firebaseapp.com",
+            projectId: "next123-dc2f7",
+            storageBucket: "next123-dc2f7.firebasestorage.app",
+            messagingSenderId: "264941557163",
+            appId: "1:264941557163:web:bd057beb7bb60756a7eeee",
+            measurementId: "G-55N4EXC47D"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                window.location.href = '/auth';
+            } else {
+                window.currentUser = user;
+
+                // Fetch user profile from Firestore
+                try {
+                    const docSnap = await getDoc(doc(db, "users", user.uid));
+                    if (docSnap.exists()) {
+                        window.userProfile = docSnap.data();
+                    } else {
+                        // Fallback: use Firebase Auth data
+                        window.userProfile = { name: user.displayName || user.email.split('@')[0] };
+                    }
+                } catch (e) {
+                    console.warn("Could not fetch Firestore profile:", e);
+                    window.userProfile = { name: user.displayName || user.email.split('@')[0] };
+                }
+            }
+        });
+
+        document.getElementById('signout-btn').addEventListener('click', () => {
+            signOut(auth);
         });
     </script>
 </body>

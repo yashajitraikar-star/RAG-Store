@@ -11,7 +11,10 @@
 <body>
     <nav class="navbar">
         <div class="nav-brand">🧠 Gemini RAG Manager</div>
-        <a href="/chat" class="nav-btn">💬 Open Chatbot</a>
+        <div style="display:flex; gap:10px;">
+            <a href="/chat" class="nav-btn">💬 Open Chatbot</a>
+            <button id="signout-btn" class="nav-btn" style="background:transparent; border:1px solid rgba(255,255,255,0.3); color:white; cursor:pointer;">Sign Out</button>
+        </div>
     </nav>
 
     <main class="container">
@@ -57,27 +60,28 @@
             <div class="alert" id="upload-alert"></div>
         </div>
 
-        <!-- Files Table Card -->
+
+
+        <!-- Gemini Store Card -->
         <div class="card">
             <div class="card-header-row">
-                <div class="card-title">📚 Uploaded Files — Knowledge Base</div>
-                <button class="btn btn-ghost" onclick="loadList()">🔄 Refresh</button>
+                <div class="card-title">🗄️ Manage Gemini Store</div>
+                <button class="btn btn-ghost" onclick="loadStoreDocs()">🔄 Refresh</button>
             </div>
 
-            <div class="empty-state" id="empty-state">No files uploaded yet.</div>
+            <div class="empty-state" id="store-empty-state">Loading store documents...</div>
 
-            <table id="files-table" style="display:none">
+            <table id="store-table" style="display:none">
                 <thead>
                     <tr>
                         <th>#</th>
-                        <th>File Name</th>
-                        <th>Type</th>
+                        <th>Name</th>
                         <th>Gemini Document ID</th>
-                        <th>Uploaded At (UTC)</th>
+                        <th>Created At</th>
                         <th>Action</th>
                     </tr>
                 </thead>
-                <tbody id="files-tbody"></tbody>
+                <tbody id="store-tbody"></tbody>
             </table>
         </div>
 
@@ -114,9 +118,11 @@
         const progressWrap = document.getElementById('progress-wrap');
         const progressBar = document.getElementById('progress-bar');
         const uploadAlert = document.getElementById('upload-alert');
-        const emptyState = document.getElementById('empty-state');
-        const filesTable = document.getElementById('files-table');
-        const filesTbody = document.getElementById('files-tbody');
+
+
+        const storeEmptyState = document.getElementById('store-empty-state');
+        const storeTable = document.getElementById('store-table');
+        const storeTbody = document.getElementById('store-tbody');
 
         let selectedFile = null;
 
@@ -208,7 +214,7 @@
 
                 showAlert('success', `✅ "${data.file_name}" [${data.file_type}] uploaded & indexed — ${data.uploaded_at}`);
                 clearBtn.click();
-                loadList();
+                loadStoreDocs();
 
             } catch (err) {
                 clearInterval(tick);
@@ -218,59 +224,75 @@
             }
         });
 
-        // ── List ──────────────────────────────────────────────────────────────
-        async function loadList() {
-            try {
-                const res = await fetch('/api/list');
-                const rows = await res.json();
-                filesTbody.innerHTML = '';
 
-                if (!rows.length) {
-                    emptyState.style.display = 'block';
-                    filesTable.style.display = 'none';
+
+        async function loadStoreDocs() {
+            try {
+                storeEmptyState.style.display = 'block';
+                storeEmptyState.textContent = 'Loading store documents...';
+                storeTable.style.display = 'none';
+
+                const res = await fetch('/api/store-docs');
+                const docs = await res.json();
+                
+                storeTbody.innerHTML = '';
+                
+                if (!docs || !docs.length) {
+                    storeEmptyState.textContent = 'Store is empty.';
                     return;
                 }
-
-                emptyState.style.display = 'none';
-                filesTable.style.display = 'table';
-
-                rows.forEach((r, i) => {
-                    const shortId = r.doc_name.split('/').pop() || r.doc_name;
-                    const icon = TYPE_ICONS[r.file_type] || '📄';
-                    const typeBadge = `<span class="type-badge">${esc(r.file_type)}</span>`;
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-            <td>${i + 1}</td>
-            <td>${icon} ${esc(r.file_name)}</td>
-            <td>${typeBadge}</td>
-            <td class="doc-id" title="${esc(r.doc_name)}">${esc(shortId)}</td>
-            <td>${esc(r.uploaded_at)}</td>
-            <td>
-              <button class="btn btn-danger btn-sm"
-                onclick="deleteRow(${r.id}, this)">🗑 Delete</button>
-            </td>
-          `;
-                    filesTbody.appendChild(tr);
+                
+                storeEmptyState.style.display = 'none';
+                storeTable.style.display = 'table';
+                
+                // Find duplicates to highlight
+                const nameCounts = {};
+                docs.forEach(d => {
+                    nameCounts[d.display_name] = (nameCounts[d.display_name] || 0) + 1;
                 });
 
+                docs.forEach((d, i) => {
+                    const shortId = d.name.split('/').pop() || d.name;
+                    const isDup = nameCounts[d.display_name] > 1;
+                    const tr = document.createElement('tr');
+                    
+                    if (isDup) tr.style.backgroundColor = 'rgba(255, 170, 0, 0.1)';
+                    
+                    tr.innerHTML = `
+                        <td>${i + 1}</td>
+                        <td>${isDup ? '⚠️ ' : ''}${esc(d.display_name)}</td>
+                        <td class="doc-id" title="${esc(d.name)}">${esc(shortId)}</td>
+                        <td>${esc(d.create_time)}</td>
+                        <td>
+                            <button class="btn btn-danger btn-sm" onclick="deleteStoreDoc('${esc(d.name)}', this)">🗑 Force Delete</button>
+                        </td>
+                    `;
+                    storeTbody.appendChild(tr);
+                });
             } catch (err) {
-                console.error('List error:', err);
+                console.error('Store list error:', err);
+                storeEmptyState.textContent = 'Failed to load store documents.';
             }
         }
 
-        async function deleteRow(id, btn) {
-            if (!confirm('Remove this file from the knowledge base?')) return;
+        async function deleteStoreDoc(docName, btn) {
+            if (!confirm('Force delete this document and all its chunks from Gemini?')) return;
+            const oldText = btn.textContent;
             btn.disabled = true;
             btn.textContent = '…';
             try {
-                const res = await fetch('/api/delete/' + id, { method: 'DELETE' });
+                const res = await fetch('/api/store-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ doc_name: docName })
+                });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Delete failed');
-                loadList();
+                loadStoreDocs();
             } catch (err) {
                 alert('Error: ' + err.message);
                 btn.disabled = false;
-                btn.textContent = '🗑 Delete';
+                btn.textContent = oldText;
             }
         }
 
@@ -289,7 +311,40 @@
                 .replace(/>/g, '&gt;');
         }
 
-        window.addEventListener('load', loadList);
+        window.addEventListener('load', () => {
+            loadStoreDocs();
+        });
+    </script>
+
+    <!-- Firebase Initialization -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-analytics.js";
+        import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAOIqTa5OCi2d-xSy34YnE4MMZ271OZ-Nk",
+            authDomain: "next123-dc2f7.firebaseapp.com",
+            projectId: "next123-dc2f7",
+            storageBucket: "next123-dc2f7.firebasestorage.app",
+            messagingSenderId: "264941557163",
+            appId: "1:264941557163:web:bd057beb7bb60756a7eeee",
+            measurementId: "G-55N4EXC47D"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+        const auth = getAuth(app);
+
+        onAuthStateChanged(auth, (user) => {
+            if (!user) {
+                window.location.href = '/auth';
+            }
+        });
+
+        document.getElementById('signout-btn').addEventListener('click', () => {
+            signOut(auth);
+        });
     </script>
 </body>
 

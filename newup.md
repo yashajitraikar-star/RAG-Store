@@ -1,159 +1,89 @@
-This is because the chatbot currently sends **only the current message** to Gemini — it has no memory of previous messages. The fix is to send the full **conversation history** with every request.
+import os
+from google import genai
+from dotenv import load_dotenv
+from collections import defaultdict
 
-## Fix 1 — Update `/api/chat` in `app.py`
+# Load environment variables
+load_dotenv()
 
-Replace the `api_chat` function:
+client = genai.Client()
+STORE_NAME = os.getenv("GEMINI_FILE_STORE")
 
-```python
-@app.route("/api/chat", methods=["POST"])
-def api_chat():
-    data    = request.get_json(force=True)
-    message = data.get("message", "").strip()
-    history = data.get("history", [])   # list of previous messages
+if not STORE_NAME:
+    print("❌ GEMINI_FILE_STORE environment variable is missing.")
+    exit(1)
 
-    if not message:
-        return jsonify({"error": "Empty message"}), 400
+print(f"📦 Fetching documents from: {STORE_NAME}\n")
 
-    try:
-        # Build contents array from history + current message
-        contents = []
-        for entry in history:
-            contents.append(
-                types.Content(
-                    role=entry["role"],   # "user" or "model"
-                    parts=[types.Part(text=entry["text"])]
-                )
-            )
-        # Add current user message
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[types.Part(text=message)]
-            )
-        )
+# ── Fetch all documents ──────────────────────────────────────────────────────
+try:
+    docs = list(client.file_search_stores.documents.list(parent=STORE_NAME))
+except Exception as e:
+    print(f"❌ Error fetching documents: {e}")
+    exit(1)
 
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                tools=[
-                    types.Tool(
-                        file_search=types.FileSearch(
-                            file_search_store_names=[STORE_NAME]
-                        )
-                    )
-                ]
-            ),
-        )
-        return jsonify({"answer": response.text})
+print(f"📄 Total documents found: {len(docs)}")
+print("─" * 45)
+for i, doc in enumerate(docs, 1):
+    display_name = getattr(doc, 'display_name', None) or doc.name
+    print(f"  {i}. {display_name}")
+print("─" * 45)
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-```
+# ── Group by display_name to find duplicates ─────────────────────────────────
+groups = defaultdict(list)
+for doc in docs:
+    display_name = getattr(doc, 'display_name', None) or doc.name
+    groups[display_name].append(doc)
 
-***
+duplicates = {name: doc_list for name, doc_list in groups.items() if len(doc_list) > 1}
 
-## Fix 2 — Update `templates/chat.html`
+if not duplicates:
+    print("\n✅ No duplicates found. Your store is already clean!")
+    exit(0)
 
-Replace the entire `<script>` block:
+# ── Preview duplicates before deletion ──────────────────────────────────────
+print(f"\n⚠️  Found {len(duplicates)} duplicate group(s):\n")
+for display_name, doc_list in duplicates.items():
+    print(f"  📄 '{display_name}' → {len(doc_list)} copies (will delete {len(doc_list) - 1})")
 
-```html
-<script>
-  const chatLog  = document.getElementById('chat-log');
-  const msgInput = document.getElementById('msg-input');
-  const sendBtn  = document.getElementById('send-btn');
+print()
+confirm = input("🗑️  Proceed with deletion? (yes/no): ").strip().lower()
 
-  // ── Conversation history stored in memory ──────────────────────────────
-  let history = [];
+if confirm != "yes":
+    print("⛔ Deletion cancelled.")
+    exit(0)
 
-  function addMsg(text, cls) {
-    const wrap   = document.createElement('div');
-    wrap.className = 'msg ' + cls;
-    const bubble = document.createElement('div');
-    bubble.className = 'msg-bubble';
-    bubble.textContent = text;
-    wrap.appendChild(bubble);
-    chatLog.appendChild(wrap);
-    chatLog.scrollTop = chatLog.scrollHeight;
-    return wrap;
-  }
+# ── Delete duplicates ────────────────────────────────────────────────────────
+print("\n🔄 Deleting duplicates...\n")
+deleted_count = 0
+failed_count = 0
 
-  async function send() {
-    const msg = msgInput.value.trim();
-    if (!msg) return;
+for display_name, doc_list in duplicates.items():
+    keep = doc_list[0]
+    to_delete = doc_list[1:]
+    keep_name = getattr(keep, 'display_name', None) or keep.name
 
-    addMsg(msg, 'user-msg');
-    msgInput.value = '';
-    sendBtn.disabled = true;
-    msgInput.disabled = true;
+    print(f"  📄 '{display_name}'")
+    print(f"     ✅ Keeping : {keep.name}")
 
-    const thinking = addMsg('⏳ Searching knowledge base…', 'bot-msg thinking');
+    for doc in to_delete:
+        try:
+            client.file_search_stores.documents.delete(name=doc.name)
+            print(f"     🗑️  Deleted : {doc.name}")
+            deleted_count += 1
+        except Exception as e:
+            print(f"     ❌ Failed  : {doc.name} → {e}")
+            failed_count += 1
+    print()
 
-    try {
-      const res = await fetch('/api/chat', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          message: msg,
-          history: history        // ← send full history every time
-        })
-      });
+# ── Final verification ───────────────────────────────────────────────────────
+print("─" * 45)
+print(f"✅ Deleted : {deleted_count} document(s)")
+if failed_count:
+    print(f"❌ Failed  : {failed_count} document(s)")
 
-      const data = await res.json();
-      chatLog.removeChild(thinking);
-
-      if (!res.ok) throw new Error(data.error || 'Chat failed');
-
-      // ── Save to history ──────────────────────────────────────────────
-      history.push({ role: "user",  text: msg });
-      history.push({ role: "model", text: data.answer });
-
-      addMsg(data.answer, 'bot-msg');
-
-    } catch (err) {
-      chatLog.removeChild(thinking);
-      addMsg('❌ Error: ' + err.message, 'bot-msg error-msg');
-    } finally {
-      sendBtn.disabled = false;
-      msgInput.disabled = false;
-      msgInput.focus();
-    }
-  }
-
-  sendBtn.addEventListener('click', send);
-  msgInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  });
-</script>
-```
-
-***
-
-## Also add a "Clear Chat" button in `chat.html`
-
-Add this button next to the chatbot title in the `chat-info-bar`:
-
-```html
-<div class="chat-info-bar" style="display:flex; justify-content:space-between; align-items:center;">
-  <span>🔍 Answers are grounded in your uploaded files</span>
-  <button class="btn btn-ghost" style="font-size:0.8rem; padding:4px 12px;"
-    onclick="history=[]; chatLog.innerHTML=''; addMsg('🧹 Chat cleared. Start a new conversation!', 'bot-msg')">
-    🧹 Clear Chat
-  </button>
-</div>
-```
-
-***
-
-## What changed
-
-| Before | After |
-|---|---|
-| Sent only current message | Sends full conversation history |
-| No memory of previous turns | Remembers names, context, follow-ups |
-| History lost on page refresh | History kept for current session (clears on refresh — by design) |
-
-Now if you say **"my name is Yash"** and later ask **"what is my name"**, it will correctly answer **Yash**. Restart with `python app.py` to apply.
+remaining = list(client.file_search_stores.documents.list(parent=STORE_NAME))
+print(f"📦 Remaining documents: {len(remaining)}\n")
+for i, doc in enumerate(remaining, 1):
+    name = getattr(doc, 'display_name', None) or doc.name
+    print(f"  {i}. {name}")
